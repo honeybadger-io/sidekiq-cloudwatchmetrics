@@ -39,11 +39,12 @@ module Sidekiq::CloudWatchMetrics
 
     INTERVAL = 60 # seconds
 
-    def initialize(client: Aws::CloudWatch::Client.new, namespace: "Sidekiq", additional_dimensions: {})
+    def initialize(client: Aws::CloudWatch::Client.new, namespace: "Sidekiq", additional_dimensions: {}, host_metrics: true)
       @client = client
       @namespace = namespace
       @lock_key = "sk-cwm-lock-#{Digest::SHA256.hexdigest(namespace)}"
       @additional_dimensions = additional_dimensions.map { |k, v| {name: k.to_s, value: v.to_s} }
+      @host_metrics = host_metrics
     end
 
     def start
@@ -152,14 +153,16 @@ module Sidekiq::CloudWatchMetrics
         },
       ]
 
-      processes.each do |process|
-        metrics << {
-          metric_name: "Utilization",
-          dimensions: [{name: "Hostname", value: process["hostname"]}],
-          timestamp: now,
-          value: process["busy"] / process["concurrency"].to_f * 100.0,
-          unit: "Percent",
-        }
+      if @host_metrics
+        processes.each do |process|
+          metrics << {
+            metric_name: "Utilization",
+            dimensions: [{name: "Hostname", value: process["hostname"]}],
+            timestamp: now,
+            value: process["busy"] / process["concurrency"].to_f * 100.0,
+            unit: "Percent",
+          }
+        end
       end
 
       queues.each do |(queue_name, queue_size)|
