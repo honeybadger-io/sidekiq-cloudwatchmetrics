@@ -5,6 +5,7 @@ require "sidekiq/api"
 require "sidekiq/util"
 
 require "aws-sdk-cloudwatch"
+require "digest"
 
 module Sidekiq::CloudWatchMetrics
   def self.enable!(**kwargs)
@@ -41,6 +42,7 @@ module Sidekiq::CloudWatchMetrics
     def initialize(client: Aws::CloudWatch::Client.new, namespace: "Sidekiq", additional_dimensions: {})
       @client = client
       @namespace = namespace
+      @lock_key = "sk-cwm-lock-#{Digest::SHA256.hexdigest(namespace)}"
       @additional_dimensions = additional_dimensions.map { |k, v| {name: k.to_s, value: v.to_s} }
     end
 
@@ -74,6 +76,8 @@ module Sidekiq::CloudWatchMetrics
     end
 
     def publish
+      return unless redis { |conn| conn.set(@lock_key, hostname, ex: INTERVAL - 1, nx: true) }
+
       now = Time.now
       stats = Sidekiq::Stats.new
       processes = Sidekiq::ProcessSet.new.to_enum(:each).to_a
@@ -191,6 +195,8 @@ module Sidekiq::CloudWatchMetrics
           metric_data: some_metrics,
         )
       end
+
+      redis { |conn| conn.del(@lock_key) }
     end
 
     # Returns the total number of workers across all processes
